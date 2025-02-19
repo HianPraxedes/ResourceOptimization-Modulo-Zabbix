@@ -1,0 +1,15 @@
+{
+    "manifest_version": 2.0,
+    "id": "resource-optimization",
+    "name": "Resource Optimization",
+    "version": "1.0",
+    "namespace": "ResourceOptimization",
+    "description": "Optimize the resources of the web page",
+    "actions": {
+        "resource.optimization": {
+            "class": "ResourceOptimization",
+            "view": "resource.optimization"
+
+        }
+    }
+}
