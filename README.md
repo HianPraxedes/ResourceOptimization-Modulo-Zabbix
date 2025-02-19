@@ -34,7 +34,7 @@ Acesse o Zabbix
 
 Ao ativar o módulo aparecerá uma nosa opção em Monitoramento da barra lateral.
 
-### Obs: A primeira vez acessando pode demorar, depende de quantos hoots estão no grupo `SERVIDORES VIRTUAIS`.
+### Obs: A primeira vez acessando pode demorar, depende de quantos hosts estão no grupo `SERVIDORES VIRTUAIS`.
 
 
 ## Solução de Problemas
