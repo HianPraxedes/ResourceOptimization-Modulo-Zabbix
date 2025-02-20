@@ -24,7 +24,7 @@
       height: 100%;
       padding: 20px;
     }
-    #search-container {
+    #search-container, #filter-checkboxes {
       text-align: right;
       margin-bottom: 10px;
     }
@@ -36,6 +36,13 @@
       width: 220px;
       background-color: #333;
       color: #ddd;
+    }
+    #filter-checkboxes label {
+      margin-left: 10px;
+      cursor: pointer;
+    }
+    #filter-checkboxes input {
+      margin-right: 4px;
     }
     table {
       width: 100%;
@@ -93,7 +100,6 @@
       background-color: #555555;
     }
     .details-link {
-      
       text-decoration: none;
       cursor: pointer;
     }
@@ -107,6 +113,12 @@
   <div class="container">
     <div id="search-container">
       <input type="text" id="search-input" placeholder="Search by hostname..." />
+    </div>
+    
+    <!-- Checkboxes de filtro para CPU e Memória -->
+    <div id="filter-checkboxes">
+      <label><input type="checkbox" id="filter-cpu-checkbox" value="cpu" />CPU</label>
+      <label><input type="checkbox" id="filter-memory-checkbox" value="memory" />Memory</label>
     </div>
     
     <table>
@@ -194,15 +206,7 @@
         detailsLink.target = "_blank";
         detailsLink.className = "details-link";
 
-        // Usa os mesmos campos originais para definir o itemid
-        var resourceItemid = "";
-        if (hostData.resource.toLowerCase() === "cpu") {
-          resourceItemid = hostData.itemid || "";
-        } else if (hostData.resource.toLowerCase() === "memory") {
-          resourceItemid = hostData.itemid || "";
-        }
-        
-        // Define o parâmetro "tab" conforme o recurso
+        var resourceItemid = hostData.itemid || "";
         var tabParam = "";
         if (hostData.resource.toLowerCase() === "cpu") {
           tabParam = "cpu";
@@ -216,24 +220,45 @@
         tr.appendChild(tdDetails);
 
         tbody.appendChild(tr);
-        
       }
       
       document.getElementById('current-page').textContent = page;
       document.getElementById('total-pages').textContent = totalPages;
     }
 
-    function filterHosts() {
+    function filterAll() {
       var searchValue = document.getElementById('search-input').value.toLowerCase();
+      var cpuChecked = document.getElementById('filter-cpu-checkbox').checked;
+      var memChecked = document.getElementById('filter-memory-checkbox').checked;
+
       filteredHosts = hosts.filter(function(host) {
-        return host.host.toLowerCase().includes(searchValue);
+        var hostNameMatch = host.host.toLowerCase().includes(searchValue);
+        var resource = host.resource.toLowerCase();
+        var resourceMatch = false;
+
+        // Se nenhum checkbox estiver marcado, exibe todos
+        if (!cpuChecked && !memChecked) {
+          resourceMatch = true;
+        } else {
+          if (cpuChecked && resource === 'cpu') {
+            resourceMatch = true;
+          }
+          if (memChecked && (resource === 'memory' || resource === 'memória')) {
+            resourceMatch = true;
+          }
+        }
+        return hostNameMatch && resourceMatch;
       });
       totalPages = Math.ceil(filteredHosts.length / rowsPerPage);
       currentPage = 1;
       renderTable(currentPage);
     }
 
-    document.getElementById('search-input').addEventListener('keyup', filterHosts);
+    // Eventos para a busca e filtros
+    document.getElementById('search-input').addEventListener('keyup', filterAll);
+    document.getElementById('filter-cpu-checkbox').addEventListener('change', filterAll);
+    document.getElementById('filter-memory-checkbox').addEventListener('change', filterAll);
+    
     document.getElementById('prev-button').addEventListener('click', function() {
       if (currentPage > 1) {
         currentPage--;
@@ -247,6 +272,7 @@
       }
     });
 
+    // Renderiza a tabela inicialmente
     renderTable(currentPage);
   </script>
 </body>
