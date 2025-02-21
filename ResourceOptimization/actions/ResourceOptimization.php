@@ -41,11 +41,9 @@ class ResourceOptimization extends CController {
             return;
         }
 
-        // Lógica de Resource Optimization
-
         // Define o caminho do arquivo de cache e o tempo de expiração (em segundos)
         $cacheFile = '/tmp/resource_optimization_cache.json';
-        $cacheTime = 28800; // (8 horas)
+        $cacheTime = 28800; // 10 segundos para testes (substitua por 28800 para 8 horas)
 
         // Se o cache existir e estiver válido, utiliza os dados do cache
         if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheTime)) {
@@ -70,80 +68,95 @@ class ResourceOptimization extends CController {
                 if (empty($hosts)) {
                     throw new \Exception("Nenhum host encontrado no grupo '$groupName'.");
                 }
-                $dataHosts = [];
+
+                // Prepara um array de hostids para a busca em lote
+                $hostids = array_map(function($host) {
+                    return $host['hostid'];
+                }, $hosts);
+
+                // Define as chaves dos itens que queremos buscar
+                $keys = [
+                    'system.cpu.util',
+                    'system.cpu.num',
+                    'vm.memory.size[pused]',
+                    'vm.memory.utilization',
+                    'vm.memory.size[total]',
+                    'vm.memory.size[available]'
+                ];
+
+                // Busca todos os itens relevantes para os hosts de uma só vez
+                $items = \API::Item()->get([
+                    'hostids' => $hostids,
+                    'filter'  => ['key_' => $keys],
+                    'output'  => ['itemid', 'hostid', 'key_', 'lastvalue']
+                ]);
+
+                // Agrupa os itens por hostid e chave para facilitar a busca
+                $groupedItems = [];
+                foreach ($items as $item) {
+                    $hostid = $item['hostid'];
+                    $key = $item['key_'];
+                    if (!isset($groupedItems[$hostid])) {
+                        $groupedItems[$hostid] = [];
+                    }
+                    $groupedItems[$hostid][$key] = $item;
+                }
 
                 // Define o período desde o início do mês até agora
                 $time_from = strtotime(date('Y-m-01 00:00:00'));
                 $time_till = time();
 
-                // Etapa 3: Para cada host, buscar os itens e coletar histórico, cálculos e recomendações
+                // Arrays para coletar os itemids que serão usados para buscar históricos
+                $cpuHistoryIds = [];
+                $memHistoryIds = [];
+                // Mapeia os hosts para seus respectivos itemids de histórico
+                $hostHistoryMapping = [];
+
+                // Prepara a estrutura de dados para cada host (dados atuais e alocações)
+                $dataHosts = [];
                 foreach ($hosts as $host) {
-                    $hostId = $host['hostid'];
+                    $hostid = $host['hostid'];
+                    $hostname = $host['host'];
 
                     // --- CPU ---
-                    // Obter o item de CPU (uso atual - system.cpu.util)
-                    $cpuItem = $this->getItemByKey($hostId, 'system.cpu.util');
-
-                    // Obter o item que representa o número total de CPUs (system.cpu.num)
-                    $cpuNumItem = $this->getItemByKey($hostId, 'system.cpu.num');
-                    if (empty($cpuItem)) {
-                        continue; // pula para o próximo $host
+                    $cpuItem = isset($groupedItems[$hostid]['system.cpu.util']) ? $groupedItems[$hostid]['system.cpu.util'] : null;
+                    $cpuNumItem = isset($groupedItems[$hostid]['system.cpu.num']) ? $groupedItems[$hostid]['system.cpu.num'] : null;
+                    if (!$cpuItem) {
+                        continue; // pula o host se não houver item de CPU
                     }
-                    if (!empty($cpuNumItem)) {
-                        $cpuAllocValue = floatval($cpuNumItem['lastvalue']);
-                        $cpuAllocation = $cpuAllocValue . " vCPUs";
-                    } else {
-                        $cpuAllocation = 'N/A';
-                        $cpuAllocValue = 0;
-                    }
+                    $cpuAllocValue = $cpuNumItem ? floatval($cpuNumItem['lastvalue']) : 0;
+                    $cpuAllocation = $cpuNumItem ? $cpuAllocValue . " vCPUs" : 'N/A';
+                    $cpuUsage = (isset($cpuItem['lastvalue']) && $cpuItem['lastvalue'] !== '') ? number_format((float)$cpuItem['lastvalue'], 2, '.', '') : 'N/A';
 
-                    $cpuUsage = (!empty($cpuItem) && isset($cpuItem['lastvalue']))
-                        ? number_format((float)$cpuItem['lastvalue'], 2, '.', '')
-                        : 'N/A';
-
-                    // Coleta do histórico para CPU (período desde o início do mês)
-                    if (!empty($cpuItem) && isset($cpuItem['itemid'])) {
-                        $cpuHistory = \API::history()->get([
-                            'output'    => 'extend',
-                            'history'   => 0,
-                            'itemids'   => $cpuItem['itemid'],
-                            'time_from' => $time_from,
-                            'time_till' => $time_till,
-                        ]);
-                        $cpuTotal = 0;
-                        $cpuCount = 0;
-                        foreach ($cpuHistory as $h) {
-                            $cpuTotal += floatval($h['value']);
-                            $cpuCount++;
-                        }
-                        $cpuAvg = ($cpuCount > 0) ? $cpuTotal / $cpuCount : 'N/A';
-                    } else {
-                        $cpuAvg = 'N/A';
+                    $cpuHistoryId = isset($cpuItem['itemid']) ? $cpuItem['itemid'] : null;
+                    if ($cpuHistoryId) {
+                        $cpuHistoryIds[] = $cpuHistoryId;
+                        $hostHistoryMapping[$hostid]['cpu'] = $cpuHistoryId;
                     }
 
                     // --- Memory ---
-                    // Tenta obter o item de memória percentual (vm.memory.size[pused])
-                    $memItemPused = $this->getItemByKey($hostId, 'vm.memory.size[pused]');
-                    if (!empty($memItemPused)) {
+                    // Tenta obter o item de memória percentual (pused)
+                    $memItemPused = isset($groupedItems[$hostid]['vm.memory.size[pused]']) ? $groupedItems[$hostid]['vm.memory.size[pused]'] : null;
+                    if ($memItemPused) {
                         $memUsage = number_format((float)$memItemPused['lastvalue'], 2, '.', '');
                         $memItemId = $memItemPused['itemid'];
                     } else {
-                        // Tenta obter o item de memory utilization (vm.memory.utilization)
-                        $memItemUtil = $this->getItemByKey($hostId, 'vm.memory.utilization');
-                        if (!empty($memItemUtil)) {
+                        // Tenta obter o item de memory utilization
+                        $memItemUtil = isset($groupedItems[$hostid]['vm.memory.utilization']) ? $groupedItems[$hostid]['vm.memory.utilization'] : null;
+                        if ($memItemUtil) {
                             $memUsage = number_format((float)$memItemUtil['lastvalue'], 2, '.', '');
                             $memItemId = $memItemUtil['itemid'];
                         } else {
-                            // Fallback: calcula a utilização com 'total' e 'available'
-                            $memTotalForCalc = $this->getItemByKey($hostId, 'vm.memory.size[total]');
-                            $memAvailableItem = $this->getItemByKey($hostId, 'vm.memory.size[available]');
-                            if (!empty($memTotalForCalc) && !empty($memAvailableItem)) {
+                            // Fallback: utiliza 'total' e 'available'
+                            $memTotalForCalc = isset($groupedItems[$hostid]['vm.memory.size[total]']) ? $groupedItems[$hostid]['vm.memory.size[total]'] : null;
+                            $memAvailableItem = isset($groupedItems[$hostid]['vm.memory.size[available]']) ? $groupedItems[$hostid]['vm.memory.size[available]'] : null;
+                            if ($memTotalForCalc && $memAvailableItem) {
                                 $totalMemCalc = floatval($memTotalForCalc['lastvalue']);
                                 if ($totalMemCalc > 0) {
                                     $availableMemory = floatval($memAvailableItem['lastvalue']);
-                                    $memUsage = number_format((1 - ($availableMemory / $totalMemCalc)) * 100, 2, '.', '');
-                                    // Como fallback, usa o itemid do total (mas idealmente deseja o item de utilization)
-                                    $memItemId = $memTotalForCalc['itemid'];
+                                    $memUsageCalc = (1 - ($availableMemory / $totalMemCalc)) * 100;
+                                    $memUsage = number_format($memUsageCalc, 2, '.', '');
+                                    $memItemId = $memTotalForCalc['itemid']; // fallback para histórico
                                 } else {
                                     $memUsage = 'N/A';
                                     $memItemId = null;
@@ -154,74 +167,165 @@ class ResourceOptimization extends CController {
                             }
                         }
                     }
-
-                    // Obter o item de memória total (vm.memory.size[total]) e converter para GB
-                    $memTotalItem = $this->getItemByKey($hostId, 'vm.memory.size[total]');
-                    if (!empty($memTotalItem)) {
+                    // Obter a alocação total de memória (convertendo de bytes para GB)
+                    $memTotalItem = isset($groupedItems[$hostid]['vm.memory.size[total]']) ? $groupedItems[$hostid]['vm.memory.size[total]'] : null;
+                    if ($memTotalItem) {
                         $totalMemoryBytes = floatval($memTotalItem['lastvalue']);
-                        $totalMemGB = ($totalMemoryBytes > 0)
-                            ? $totalMemoryBytes / (1024 * 1024 * 1024)
-                            : 0;
-                        $memAllocation = ($totalMemGB > 0)
-                            ? number_format($totalMemGB, 2, '.', '') . " GB"
-                            : 'N/A';
+                        $totalMemGB = $totalMemoryBytes > 0 ? $totalMemoryBytes / (1024 * 1024 * 1024) : 0;
+                        $memAllocation = $totalMemGB > 0 ? number_format($totalMemGB, 2, '.', '') . " GB" : 'N/A';
                     } else {
                         $memAllocation = 'N/A';
                         $totalMemGB = 0;
                     }
+                    if ($memItemId) {
+                        $memHistoryIds[] = $memItemId;
+                        $hostHistoryMapping[$hostid]['mem'] = $memItemId;
+                    }
 
-                    // Coleta do histórico para Memory (usando o item de utilização ou fallback) desde o início do mês
-                    if (!empty($memItemId)) {
-                        $memHistory = \API::history()->get([
-                            'output'    => 'extend',
-                            'history'   => 0,
-                            'itemids'   => $memItemId,
-                            'time_from' => $time_from,
-                            'time_till' => $time_till,
-                        ]);
+                    // Armazena os dados iniciais para o host
+                    $dataHosts[$hostid] = [
+                        'host' => $hostname,
+                        'resource_cpu' => [
+                            'current_usage' => ($cpuUsage !== 'N/A') ? $cpuUsage : 'N/A',
+                            'current_allocation' => $cpuAllocation,
+                            'avg' => null, // a ser calculado
+                            'recommendation' => null,
+                            'potential_savings' => null,
+                            'itemid' => $cpuHistoryId,
+                        ],
+                        'resource_mem' => [
+                            'current_usage' => ($memUsage !== 'N/A') ? $memUsage : 'N/A',
+                            'current_allocation' => $memAllocation,
+                            'avg' => null, // a ser calculado
+                            'recommendation' => null,
+                            'potential_savings' => null,
+                            'itemid' => isset($hostHistoryMapping[$hostid]['mem']) ? $hostHistoryMapping[$hostid]['mem'] : null,
+                        ],
+                        'total_mem_gb' => $totalMemGB,
+                        'cpu_alloc_value' => $cpuAllocValue,
+                    ];
+                }
+
+                // --- Busca dos históricos em lote ---
+
+                // Histórico de CPU
+                $cpuHistoriesRaw = [];
+                if (!empty($cpuHistoryIds)) {
+                    $cpuHistoriesRaw = \API::history()->get([
+                        'output'    => 'extend',
+                        'history'   => 0,
+                        'itemids'   => array_unique($cpuHistoryIds),
+                        'time_from' => $time_from,
+                        'time_till' => $time_till,
+                    ]);
+                }
+                $cpuHistories = [];
+                foreach ($cpuHistoriesRaw as $entry) {
+                    $itemid = $entry['itemid'];
+                    if (!isset($cpuHistories[$itemid])) {
+                        $cpuHistories[$itemid] = [];
+                    }
+                    $cpuHistories[$itemid][] = $entry;
+                }
+
+                // Histórico de Memory
+                $memHistoriesRaw = [];
+                if (!empty($memHistoryIds)) {
+                    $memHistoriesRaw = \API::history()->get([
+                        'output'    => 'extend',
+                        'history'   => 0,
+                        'itemids'   => array_unique($memHistoryIds),
+                        'time_from' => $time_from,
+                        'time_till' => $time_till,
+                    ]);
+                }
+                $memHistories = [];
+                foreach ($memHistoriesRaw as $entry) {
+                    $itemid = $entry['itemid'];
+                    if (!isset($memHistories[$itemid])) {
+                        $memHistories[$itemid] = [];
+                    }
+                    $memHistories[$itemid][] = $entry;
+                }
+
+                // --- Cálculo de médias e recomendações ---
+                $finalDataHosts = [];
+                foreach ($dataHosts as $hostid => $hostData) {
+                    // Média de CPU
+                    $cpuItemid = $hostData['resource_cpu']['itemid'];
+                    $cpuAvg = 'N/A';
+                    if ($cpuItemid && isset($cpuHistories[$cpuItemid])) {
+                        $entries = $cpuHistories[$cpuItemid];
+                        $cpuTotal = 0;
+                        $cpuCount = 0;
+                        foreach ($entries as $entry) {
+                            $cpuTotal += floatval($entry['value']);
+                            $cpuCount++;
+                        }
+                        if ($cpuCount > 0) {
+                            $cpuAvg = $cpuTotal / $cpuCount;
+                        }
+                    }
+                    $hostData['resource_cpu']['avg'] = $cpuAvg;
+
+                    // Média de Memory
+                    $memItemid = $hostData['resource_mem']['itemid'];
+                    $memAvg = 'N/A';
+                    if ($memItemid && isset($memHistories[$memItemid])) {
+                        $entries = $memHistories[$memItemid];
                         $memTotal = 0;
                         $memCount = 0;
-                        foreach ($memHistory as $h) {
-                            $memTotal += floatval($h['value']);
+                        foreach ($entries as $entry) {
+                            $memTotal += floatval($entry['value']);
                             $memCount++;
                         }
-                        $memAvg = ($memCount > 0) ? $memTotal / $memCount : $memUsage;
+                        if ($memCount > 0) {
+                            $memAvg = $memTotal / $memCount;
+                        } else {
+                            $memAvg = $hostData['resource_mem']['current_usage'];
+                        }
                     } else {
-                        $memAvg = $memUsage;
+                        $memAvg = $hostData['resource_mem']['current_usage'];
                     }
-                    
-                    // Lógica de recomendação dinâmica para CPU (meta: ~50% de uso)
+                    $hostData['resource_mem']['avg'] = $memAvg;
+
+                    // Recomendações baseadas nas médias
+                    // --- CPU ---
                     if ($cpuAvg !== 'N/A') {
                         $cpuAvgVal = floatval($cpuAvg);
-                        if ($cpuAvgVal < 50) {
-                            $newCpuAllocation = round($cpuAllocValue * ($cpuAvgVal / 50), 2);
+                        if ($cpuAvgVal < 60) {
+                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 50), 2);
                             $cpuArrow = "↓";
-                            $changeAmount = round($cpuAllocValue - $newCpuAllocation, 2);
-                        } elseif ($cpuAvgVal > 60) {
-                            $newCpuAllocation = round($cpuAllocValue * ($cpuAvgVal / 50), 2);
+                            $changeAmount = round($hostData['cpu_alloc_value'] - $newCpuAllocation, 2);
+                        } elseif ($cpuAvgVal > 95) {
+                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 50), 2);
                             $cpuArrow = "↑";
-                            $changeAmount = round($newCpuAllocation - $cpuAllocValue, 2);
+                            $changeAmount = round($newCpuAllocation - $hostData['cpu_alloc_value'], 2);
                         } else {
-                            $newCpuAllocation = $cpuAllocValue;
+                            $newCpuAllocation = $hostData['cpu_alloc_value'];
                             $cpuArrow = "";
                             $changeAmount = 0;
                         }
-                        $cpuRecommendation = "{$newCpuAllocation} vCPUs";
-                        $cpuSavings = $cpuArrow . " " . $changeAmount . " vCPUs";
+                        // Formata para 2 casas decimais com vírgula
+                        $cpuRecommendation = number_format($newCpuAllocation, 2, ',', '') . " vCPUs";
+                        $cpuSavings = $cpuArrow . " " . number_format($changeAmount, 2, ',', '') . " vCPUs";
                     } else {
                         $cpuRecommendation = "No change";
                         $cpuSavings = "";
                     }
-                    
-                    // Lógica de recomendação dinâmica para Memory
+                    $hostData['resource_cpu']['recommendation'] = $cpuRecommendation;
+                    $hostData['resource_cpu']['potential_savings'] = $cpuSavings;
+
+                    // --- Memory ---
                     if ($memAvg !== 'N/A') {
-                        $memAvg = floatval($memAvg);
-                        if ($memAvg > 60) {
-                            $newMemAllocation = round(($totalMemGB * ($memAvg / 50)), 2);
+                        $memAvgVal = floatval($memAvg);
+                        $totalMemGB = $hostData['total_mem_gb'];
+                        if ($memAvgVal > 95) {
+                            $newMemAllocation = round(($totalMemGB * ($memAvgVal / 50)), 2);
                             $memArrow = "↑";
                             $changeMem = round($newMemAllocation - $totalMemGB, 2);
-                        } elseif ($memAvg < 50) {
-                            $newMemAllocation = round(($totalMemGB * ($memAvg / 50)), 2);
+                        } elseif ($memAvgVal < 60) {
+                            $newMemAllocation = round(($totalMemGB * ($memAvgVal / 50)), 2);
                             $memArrow = "↓";
                             $changeMem = round($totalMemGB - $newMemAllocation, 2);
                         } else {
@@ -229,37 +333,37 @@ class ResourceOptimization extends CController {
                             $memArrow = "";
                             $changeMem = 0;
                         }
-                        $memRecommendation = "{$newMemAllocation} GB";
-                        $memSavings = $memArrow . " " . abs($changeMem) . " GB";
+                        $memRecommendation = number_format($newMemAllocation, 2, ',', '') . " GB";
+                        $memSavings = $memArrow . " " . number_format(abs($changeMem), 2, ',', '') . " GB";
                     } else {
                         $memRecommendation = "No change";
                         $memSavings = "";
                     }
+                    $hostData['resource_mem']['recommendation'] = $memRecommendation;
+                    $hostData['resource_mem']['potential_savings'] = $memSavings;
 
-                    // Adiciona os dados de CPU ao array, utilizando o itemid obtido
-                    $dataHosts[] = [
-                        'host'               => $host['host'],
+                    // Adiciona os dados de CPU e Memory no array final
+                    $finalDataHosts[] = [
+                        'host'               => $hostData['host'],
                         'resource'           => 'CPU',
-                        'current_usage'      => ($cpuUsage !== 'N/A') ? $cpuUsage . '%' : 'N/A',
-                        'current_allocation' => $cpuAllocation,
-                        'recommendation'     => $cpuRecommendation,
-                        'potential_savings'  => $cpuSavings,
-                        'itemid'             => (!empty($cpuItem) && isset($cpuItem['itemid'])) ? $cpuItem['itemid'] : null,
+                        'current_usage'      => ($hostData['resource_cpu']['current_usage'] !== 'N/A') ? $hostData['resource_cpu']['current_usage'] . '%' : 'N/A',
+                        'current_allocation' => $hostData['resource_cpu']['current_allocation'],
+                        'recommendation'     => $hostData['resource_cpu']['recommendation'],
+                        'potential_savings'  => $hostData['resource_cpu']['potential_savings'],
+                        'itemid'             => $hostData['resource_cpu']['itemid'],
                     ];
-
-                    // Adiciona os dados de Memory ao array, utilizando o itemid (do item de utilização ou fallback)
-                    $dataHosts[] = [
-                        'host'               => $host['host'],
+                    $finalDataHosts[] = [
+                        'host'               => $hostData['host'],
                         'resource'           => 'Memory',
-                        'current_usage'      => ($memUsage !== 'N/A') ? $memUsage . '%' : 'N/A',
-                        'current_allocation' => $memAllocation,
-                        'recommendation'     => $memRecommendation,
-                        'potential_savings'  => $memSavings,
-                        'itemid'             => $memItemId,
+                        'current_usage'      => ($hostData['resource_mem']['current_usage'] !== 'N/A') ? $hostData['resource_mem']['current_usage'] . '%' : 'N/A',
+                        'current_allocation' => $hostData['resource_mem']['current_allocation'],
+                        'recommendation'     => $hostData['resource_mem']['recommendation'],
+                        'potential_savings'  => $hostData['resource_mem']['potential_savings'],
+                        'itemid'             => $hostData['resource_mem']['itemid'],
                     ];
                 }
 
-                $data = ['hosts' => $dataHosts];
+                $data = ['hosts' => $finalDataHosts];
 
                 // Atualiza o cache com os novos dados
                 file_put_contents($cacheFile, json_encode($data));
@@ -269,22 +373,6 @@ class ResourceOptimization extends CController {
         }
 
         $this->setResponse(new CControllerResponseData($data));
-    }
-
-    /**
-     * Função auxiliar para obter um item a partir da chave.
-     *
-     * @param int    $hostId
-     * @param string $key
-     * @return array|null Retorna o primeiro item encontrado ou null se não houver
-     */
-    private function getItemByKey($hostId, $key) {
-        $items = \API::Item()->get([
-            'hostids' => $hostId,
-            'filter'  => ['key_' => $key],
-            'output'  => ['itemid', 'lastvalue']
-        ]);
-        return !empty($items) ? $items[0] : null;
     }
 }
 ?>
