@@ -109,7 +109,6 @@ class ResourceOptimization extends CController {
                 // Arrays para coletar os itemids que serão usados para buscar históricos
                 $cpuHistoryIds = [];
                 $memHistoryIds = [];
-                // Mapeia os hosts para seus respectivos itemids de histórico
                 $hostHistoryMapping = [];
 
                 // Prepara a estrutura de dados para cada host (dados atuais e alocações)
@@ -182,7 +181,6 @@ class ResourceOptimization extends CController {
                         $hostHistoryMapping[$hostid]['mem'] = $memItemId;
                     }
 
-                    // Armazena os dados iniciais para o host
                     $dataHosts[$hostid] = [
                         'host' => $hostname,
                         'resource_cpu' => [
@@ -289,16 +287,18 @@ class ResourceOptimization extends CController {
                     }
                     $hostData['resource_mem']['avg'] = $memAvg;
 
-                    // Recomendações baseadas nas médias
-                    // --- CPU ---
+                    // Recomendações para CPU com novos thresholds:
+                    // Se uso < 70% → recomendação de redução
+                    // Se uso > 95% → recomendação de aumento
+                    // Caso contrário, nenhuma alteração (mantém o valor atual)
                     if ($cpuAvg !== 'N/A') {
                         $cpuAvgVal = floatval($cpuAvg);
-                        if ($cpuAvgVal < 60) {
-                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 50), 2);
+                        if ($cpuAvgVal < 70) { // Uso baixo: recomendar diminuição
+                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 70), 2);
                             $cpuArrow = "↓";
                             $changeAmount = round($hostData['cpu_alloc_value'] - $newCpuAllocation, 2);
-                        } elseif ($cpuAvgVal > 95) {
-                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 50), 2);
+                        } elseif ($cpuAvgVal > 95) { // Uso alto: recomendar aumento
+                            $newCpuAllocation = round($hostData['cpu_alloc_value'] * ($cpuAvgVal / 95), 2);
                             $cpuArrow = "↑";
                             $changeAmount = round($newCpuAllocation - $hostData['cpu_alloc_value'], 2);
                         } else {
@@ -306,9 +306,8 @@ class ResourceOptimization extends CController {
                             $cpuArrow = "";
                             $changeAmount = 0;
                         }
-                        // Formata para 2 casas decimais com vírgula
                         $cpuRecommendation = number_format($newCpuAllocation, 2, ',', '') . " vCPUs";
-                        $cpuSavings = $cpuArrow . " " . number_format($changeAmount, 2, ',', '') . " vCPUs";
+                        $cpuSavings = ($changeAmount != 0) ? $cpuArrow . " " . number_format(abs($changeAmount), 2, ',', '') . " vCPUs" : "No change";
                     } else {
                         $cpuRecommendation = "No change";
                         $cpuSavings = "";
@@ -316,25 +315,28 @@ class ResourceOptimization extends CController {
                     $hostData['resource_cpu']['recommendation'] = $cpuRecommendation;
                     $hostData['resource_cpu']['potential_savings'] = $cpuSavings;
 
-                    // --- Memory ---
+                    // Recomendações para Memory com novos thresholds:
+                    // Se uso < 70% → recomendar diminuição
+                    // Se uso > 95% → recomendar aumento
+                    // Caso contrário, manter o valor atual
                     if ($memAvg !== 'N/A') {
                         $memAvgVal = floatval($memAvg);
                         $totalMemGB = $hostData['total_mem_gb'];
-                        if ($memAvgVal > 95) {
-                            $newMemAllocation = round(($totalMemGB * ($memAvgVal / 50)), 2);
-                            $memArrow = "↑";
-                            $changeMem = round($newMemAllocation - $totalMemGB, 2);
-                        } elseif ($memAvgVal < 60) {
-                            $newMemAllocation = round(($totalMemGB * ($memAvgVal / 50)), 2);
+                        if ($memAvgVal < 70) { // Uso baixo: recomendar diminuição
+                            $newMemAllocation = round($totalMemGB * ($memAvgVal / 70), 2);
                             $memArrow = "↓";
                             $changeMem = round($totalMemGB - $newMemAllocation, 2);
+                        } elseif ($memAvgVal > 95) { // Uso alto: recomendar aumento
+                            $newMemAllocation = round($totalMemGB * ($memAvgVal / 95), 2);
+                            $memArrow = "↑";
+                            $changeMem = round($newMemAllocation - $totalMemGB, 2);
                         } else {
                             $newMemAllocation = $totalMemGB;
                             $memArrow = "";
                             $changeMem = 0;
                         }
                         $memRecommendation = number_format($newMemAllocation, 2, ',', '') . " GB";
-                        $memSavings = $memArrow . " " . number_format(abs($changeMem), 2, ',', '') . " GB";
+                        $memSavings = ($changeMem != 0) ? $memArrow . " " . number_format(abs($changeMem), 2, ',', '') . " GB" : "No change";
                     } else {
                         $memRecommendation = "No change";
                         $memSavings = "";
@@ -342,7 +344,6 @@ class ResourceOptimization extends CController {
                     $hostData['resource_mem']['recommendation'] = $memRecommendation;
                     $hostData['resource_mem']['potential_savings'] = $memSavings;
 
-                    // Adiciona os dados de CPU e Memory no array final
                     $finalDataHosts[] = [
                         'host'               => $hostData['host'],
                         'resource'           => 'CPU',
