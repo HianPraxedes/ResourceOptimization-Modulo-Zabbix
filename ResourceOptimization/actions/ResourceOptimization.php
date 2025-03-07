@@ -106,9 +106,9 @@ class ResourceOptimization extends CController {
                 $time_from = time() - (30 * 24 * 60 * 60);
                 $time_till = time();
 
-                // Arrays para coletar os itemids que serão usados para buscar históricos
-                $cpuHistoryIds = [];
-                $memHistoryIds = [];
+                // Arrays para coletar os itemids que serão usados para buscar dados de Trends
+                $cpuTrendIds = [];
+                $memTrendIds = [];
                 $hostHistoryMapping = [];
 
                 // Prepara a estrutura de dados para cada host (dados atuais e alocações)
@@ -127,10 +127,10 @@ class ResourceOptimization extends CController {
                     $cpuAllocation = $cpuNumItem ? $cpuAllocValue . " vCPUs" : 'N/A';
                     $cpuUsage = (isset($cpuItem['lastvalue']) && $cpuItem['lastvalue'] !== '') ? number_format((float)$cpuItem['lastvalue'], 2, '.', '') : 'N/A';
 
-                    $cpuHistoryId = isset($cpuItem['itemid']) ? $cpuItem['itemid'] : null;
-                    if ($cpuHistoryId) {
-                        $cpuHistoryIds[] = $cpuHistoryId;
-                        $hostHistoryMapping[$hostid]['cpu'] = $cpuHistoryId;
+                    $cpuTrendId = isset($cpuItem['itemid']) ? $cpuItem['itemid'] : null;
+                    if ($cpuTrendId) {
+                        $cpuTrendIds[] = $cpuTrendId;
+                        $hostHistoryMapping[$hostid]['cpu'] = $cpuTrendId;
                     }
 
                     // --- Memory ---
@@ -155,7 +155,7 @@ class ResourceOptimization extends CController {
                                     $availableMemory = floatval($memAvailableItem['lastvalue']);
                                     $memUsageCalc = (1 - ($availableMemory / $totalMemCalc)) * 100;
                                     $memUsage = number_format($memUsageCalc, 2, '.', '');
-                                    $memItemId = $memTotalForCalc['itemid']; // fallback para histórico
+                                    $memItemId = $memTotalForCalc['itemid']; // fallback para trends
                                 } else {
                                     $memUsage = 'N/A';
                                     $memItemId = null;
@@ -177,7 +177,7 @@ class ResourceOptimization extends CController {
                         $totalMemGB = 0;
                     }
                     if ($memItemId) {
-                        $memHistoryIds[] = $memItemId;
+                        $memTrendIds[] = $memItemId;
                         $hostHistoryMapping[$hostid]['mem'] = $memItemId;
                     }
 
@@ -189,7 +189,7 @@ class ResourceOptimization extends CController {
                             'avg' => null, // a ser calculado
                             'recommendation' => null,
                             'potential_savings' => null,
-                            'itemid' => $cpuHistoryId,
+                            'itemid' => $cpuTrendId,
                         ],
                         'resource_mem' => [
                             'current_usage' => ($memUsage !== 'N/A') ? $memUsage : 'N/A',
@@ -204,60 +204,58 @@ class ResourceOptimization extends CController {
                     ];
                 }
 
-                // --- Busca dos históricos em lote ---
+                // --- Busca dos dados de Trends em lote ---
 
-                // Histórico de CPU
-                $cpuHistoriesRaw = [];
-                if (!empty($cpuHistoryIds)) {
-                    $cpuHistoriesRaw = \API::history()->get([
+                // Trends de CPU
+                $cpuTrendsRaw = [];
+                if (!empty($cpuTrendIds)) {
+                    $cpuTrendsRaw = \API::trend()->get([
                         'output'    => 'extend',
-                        'history'   => 0,
-                        'itemids'   => array_unique($cpuHistoryIds),
+                        'itemids'   => array_unique($cpuTrendIds),
                         'time_from' => $time_from,
                         'time_till' => $time_till,
                     ]);
                 }
-                $cpuHistories = [];
-                foreach ($cpuHistoriesRaw as $entry) {
+                $cpuTrends = [];
+                foreach ($cpuTrendsRaw as $entry) {
                     $itemid = $entry['itemid'];
-                    if (!isset($cpuHistories[$itemid])) {
-                        $cpuHistories[$itemid] = [];
+                    if (!isset($cpuTrends[$itemid])) {
+                        $cpuTrends[$itemid] = [];
                     }
-                    $cpuHistories[$itemid][] = $entry;
+                    $cpuTrends[$itemid][] = $entry;
                 }
 
-                // Histórico de Memory
-                $memHistoriesRaw = [];
-                if (!empty($memHistoryIds)) {
-                    $memHistoriesRaw = \API::history()->get([
+                // Trends de Memory
+                $memTrendsRaw = [];
+                if (!empty($memTrendIds)) {
+                    $memTrendsRaw = \API::trend()->get([
                         'output'    => 'extend',
-                        'history'   => 0,
-                        'itemids'   => array_unique($memHistoryIds),
+                        'itemids'   => array_unique($memTrendIds),
                         'time_from' => $time_from,
                         'time_till' => $time_till,
                     ]);
                 }
-                $memHistories = [];
-                foreach ($memHistoriesRaw as $entry) {
+                $memTrends = [];
+                foreach ($memTrendsRaw as $entry) {
                     $itemid = $entry['itemid'];
-                    if (!isset($memHistories[$itemid])) {
-                        $memHistories[$itemid] = [];
+                    if (!isset($memTrends[$itemid])) {
+                        $memTrends[$itemid] = [];
                     }
-                    $memHistories[$itemid][] = $entry;
+                    $memTrends[$itemid][] = $entry;
                 }
 
                 // --- Cálculo de médias e recomendações ---
                 $finalDataHosts = [];
                 foreach ($dataHosts as $hostid => $hostData) {
-                    // Média de CPU
+                    // Média de CPU usando trends (valor médio: value_avg)
                     $cpuItemid = $hostData['resource_cpu']['itemid'];
                     $cpuAvg = 'N/A';
-                    if ($cpuItemid && isset($cpuHistories[$cpuItemid])) {
-                        $entries = $cpuHistories[$cpuItemid];
+                    if ($cpuItemid && isset($cpuTrends[$cpuItemid])) {
+                        $entries = $cpuTrends[$cpuItemid];
                         $cpuTotal = 0;
                         $cpuCount = 0;
                         foreach ($entries as $entry) {
-                            $cpuTotal += floatval($entry['value']);
+                            $cpuTotal += floatval($entry['value_avg']);
                             $cpuCount++;
                         }
                         if ($cpuCount > 0) {
@@ -266,15 +264,15 @@ class ResourceOptimization extends CController {
                     }
                     $hostData['resource_cpu']['avg'] = $cpuAvg;
 
-                    // Média de Memory
+                    // Média de Memory usando trends (valor médio: value_avg)
                     $memItemid = $hostData['resource_mem']['itemid'];
                     $memAvg = 'N/A';
-                    if ($memItemid && isset($memHistories[$memItemid])) {
-                        $entries = $memHistories[$memItemid];
+                    if ($memItemid && isset($memTrends[$memItemid])) {
+                        $entries = $memTrends[$memItemid];
                         $memTotal = 0;
                         $memCount = 0;
                         foreach ($entries as $entry) {
-                            $memTotal += floatval($entry['value']);
+                            $memTotal += floatval($entry['value_avg']);
                             $memCount++;
                         }
                         if ($memCount > 0) {
