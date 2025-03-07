@@ -169,14 +169,18 @@
                 <p id="total-hosts"></p>
             </div>
             <div class="card">
-                <h3>Average Efficiency</h3>
-                <p id="avg-efficiency-cpu"></p>
-                <p id="avg-efficiency-memory"></p>
+                <h3>CPU Utilizations</h3>
+                <!-- Total alocado aparece na primeira linha -->
+                <p id="cpu-total"></p>
+                <p id="cpu-utilization"></p>
+                <p id="cpu-optimization"></p>
             </div>
             <div class="card">
-                <h3>Optimization Potential</h3>
-                <p id="optimization-potential-cpu"></p>
-                <p id="optimization-potential-memory"></p>
+                <h3>Memory Utilization</h3>
+                <!-- Total alocado aparece na primeira linha -->
+                <p id="memory-total"></p>
+                <p id="memory-utilization"></p>
+                <p id="memory-optimization"></p>
             </div>
         </div>
 
@@ -297,76 +301,87 @@
         }
 
         function updateCards() {
-            // Total de hosts (únicos) utilizando o array completo 'hosts'
+            // Total de hosts (únicos)
             var uniqueHosts = new Set(hosts.map(function(item) {
                 return item.host;
             }));
             document.getElementById('total-hosts').textContent = uniqueHosts.size;
 
-            // Cálculo da Average Efficiency: média de current_usage (porcentagem)
-            var cpuSum = 0,
-                cpuCount = 0;
-            var memSum = 0,
-                memCount = 0;
-            hosts.forEach(function(item) {
-                if (item.current_usage && item.current_usage !== 'N/A') {
-                    var usage = parseFloat(item.current_usage.replace('%', ''));
-                    if (item.resource.toLowerCase() === 'cpu') {
-                        cpuSum += usage;
-                        cpuCount++;
-                    } else if (item.resource.toLowerCase() === 'memory' || item.resource.toLowerCase() === 'memória') {
-                        memSum += usage;
-                        memCount++;
-                    }
-                }
-            });
-            var avgCpuUsage = cpuCount > 0 ? (cpuSum / cpuCount).toFixed(2) : 'N/A';
-            var avgMemUsage = memCount > 0 ? (memSum / memCount).toFixed(2) : 'N/A';
-
-            // Cálculo do total somado da alocação (MOA) para CPU e Memória
+            // CPU Utilizations e Optimization (apenas para CPU)
+            var cpuUsageSum = 0,
+                cpuUsageCount = 0;
             var cpuAllocSum = 0;
-            var memAllocSum = 0;
+            var cpuPotential = 0;
             hosts.forEach(function(item) {
-                if (item.current_allocation && item.current_allocation !== 'N/A') {
-                    // Remove as unidades (ex: 'vCPUs' ou 'GB')
-                    var allocation = parseFloat(item.current_allocation.replace('vCPUs', '').replace('GB', ''));
-                    if (item.resource.toLowerCase() === 'cpu') {
-                        cpuAllocSum += allocation;
-                    } else if (item.resource.toLowerCase() === 'memory' || item.resource.toLowerCase() === 'memória') {
-                        memAllocSum += allocation;
+                if (item.resource.toLowerCase() === 'cpu') {
+                    if (item.current_usage && item.current_usage !== 'N/A') {
+                        var usage = parseFloat(item.current_usage.replace('%', ''));
+                        cpuUsageSum += usage;
+                        cpuUsageCount++;
                     }
-                }
-            });
-            var totalCpuAlloc = cpuAllocSum ? cpuAllocSum.toFixed(2) : 'N/A';
-            var totalMemAlloc = memAllocSum ? memAllocSum.toFixed(2) : 'N/A';
-
-            // Atualiza os cards de Average Efficiency com porcentagem e total de alocação
-            document.getElementById('avg-efficiency-cpu').textContent = "CPU: " + (avgCpuUsage !== 'N/A' ? avgCpuUsage + '%' : 'N/A') + " (Total Alloc: " + totalCpuAlloc + " vCPUs)";
-            document.getElementById('avg-efficiency-memory').textContent = "Memory: " + (avgMemUsage !== 'N/A' ? avgMemUsage + '%' : 'N/A') + " (Total Alloc: " + totalMemAlloc + " GB)";
-
-            // Optimization Potential: soma os valores dos potenciais utilizando o array 'hosts'
-            var cpuPotential = 0,
-                memPotential = 0;
-            hosts.forEach(function(item) {
-                if (item.potential_savings && item.potential_savings.trim() !== "") {
-                    // Ignora se for "No change"
-                    if (item.potential_savings.toLowerCase().includes("no change")) return;
-                    var match = item.potential_savings.match(/([↓↑])\s*([\d\.]+)/);
-                    if (match) {
-                        var arrow = match[1];
-                        var value = parseFloat(match[2]);
-                        if (item.resource.toLowerCase() === 'cpu') {
-                            cpuPotential += (arrow === '↓' ? -value : value);
-                        } else if (item.resource.toLowerCase() === 'memory' || item.resource.toLowerCase() === 'memória') {
-                            memPotential += (arrow === '↓' ? -value : value);
+                    if (item.current_allocation && item.current_allocation !== 'N/A') {
+                        var allocation = parseFloat(item.current_allocation.replace('vCPUs', ''));
+                        cpuAllocSum += allocation;
+                    }
+                    if (item.potential_savings && item.potential_savings.trim() !== "") {
+                        if (!item.potential_savings.toLowerCase().includes("no change")) {
+                            var match = item.potential_savings.match(/([↓↑])\s*([\d\.]+)/);
+                            if (match) {
+                                var arrow = match[1];
+                                var value = parseFloat(match[2]);
+                                cpuPotential += (arrow === '↓' ? -value : value);
+                            }
                         }
                     }
                 }
             });
+            var avgCpuUsage = cpuUsageCount > 0 ? (cpuUsageSum / cpuUsageCount).toFixed(2) : 'N/A';
+            var totalCpuAlloc = cpuAllocSum.toFixed(2);
             var cpuArrow = cpuPotential < 0 ? '↓' : (cpuPotential > 0 ? '↑' : '');
+            var cpuOptStr = cpuArrow ? cpuArrow + " " + Math.abs(cpuPotential).toFixed(2) + " vCPUs" : "No change";
+
+            // Atualiza os elementos do card de CPU
+            document.getElementById('cpu-total').textContent = "Total Allocated: " + totalCpuAlloc + " vCPUs";
+            document.getElementById('cpu-utilization').textContent = "Utilization: " + (avgCpuUsage !== 'N/A' ? avgCpuUsage + '%' : 'N/A');
+            document.getElementById('cpu-optimization').textContent = "Optimization Potential: " + cpuOptStr;
+
+            // Memory Utilization e Optimization (apenas para Memória)
+            var memUsageSum = 0,
+                memUsageCount = 0;
+            var memAllocSum = 0;
+            var memPotential = 0;
+            hosts.forEach(function(item) {
+                if (item.resource.toLowerCase() === 'memory' || item.resource.toLowerCase() === 'memória') {
+                    if (item.current_usage && item.current_usage !== 'N/A') {
+                        var usage = parseFloat(item.current_usage.replace('%', ''));
+                        memUsageSum += usage;
+                        memUsageCount++;
+                    }
+                    if (item.current_allocation && item.current_allocation !== 'N/A') {
+                        var allocation = parseFloat(item.current_allocation.replace('GB', ''));
+                        memAllocSum += allocation;
+                    }
+                    if (item.potential_savings && item.potential_savings.trim() !== "") {
+                        if (!item.potential_savings.toLowerCase().includes("no change")) {
+                            var match = item.potential_savings.match(/([↓↑])\s*([\d\.]+)/);
+                            if (match) {
+                                var arrow = match[1];
+                                var value = parseFloat(match[2]);
+                                memPotential += (arrow === '↓' ? -value : value);
+                            }
+                        }
+                    }
+                }
+            });
+            var avgMemUsage = memUsageCount > 0 ? (memUsageSum / memUsageCount).toFixed(2) : 'N/A';
+            var totalMemAlloc = memAllocSum.toFixed(2);
             var memArrow = memPotential < 0 ? '↓' : (memPotential > 0 ? '↑' : '');
-            document.getElementById('optimization-potential-cpu').textContent = "CPU: " + (cpuArrow ? cpuArrow + " " + Math.abs(cpuPotential).toFixed(2) + " vCPUs" : "No change");
-            document.getElementById('optimization-potential-memory').textContent = "Memory: " + (memArrow ? memArrow + " " + Math.abs(memPotential).toFixed(2) + " GB" : "No change");
+            var memOptStr = memArrow ? memArrow + " " + Math.abs(memPotential).toFixed(2) + " GB" : "No change";
+
+            // Atualiza os elementos do card de Memória
+            document.getElementById('memory-total').textContent = "Total Allocated: " + totalMemAlloc + " GB";
+            document.getElementById('memory-utilization').textContent = "Utilization: " + (avgMemUsage !== 'N/A' ? avgMemUsage + '%' : 'N/A');
+            document.getElementById('memory-optimization').textContent = "Optimization Potential: " + memOptStr;
         }
 
         function filterAll() {
