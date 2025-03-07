@@ -43,7 +43,7 @@ class ResourceOptimization extends CController {
 
         // Define o caminho do arquivo de cache e o tempo de expiração (em segundos)
         $cacheFile = '/tmp/resource_optimization_cache.json';
-        $cacheTime = 10; // 10 segundos para testes (substitua por 28800 para 8 horas)
+        $cacheTime = 28800; // 10 segundos para testes (substitua por 28800 para 8 horas)
 
         // Se o cache existir e estiver válido, utiliza os dados do cache
         if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheTime)) {
