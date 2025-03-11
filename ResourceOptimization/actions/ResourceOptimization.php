@@ -78,10 +78,8 @@ class ResourceOptimization extends CController {
                 $keys = [
                     'system.cpu.util',
                     'system.cpu.num',
-                    'vm.memory.size[pused]',
                     'vm.memory.utilization',
-                    'vm.memory.size[total]',
-                    'vm.memory.size[available]'
+                    'vm.memory.size[total]'
                 ];
 
                 // Busca todos os itens relevantes para os hosts de uma só vez
@@ -134,38 +132,16 @@ class ResourceOptimization extends CController {
                     }
 
                     // --- Memory ---
-                    // Tenta obter o item de memória percentual (pused)
-                    $memItemPused = isset($groupedItems[$hostid]['vm.memory.size[pused]']) ? $groupedItems[$hostid]['vm.memory.size[pused]'] : null;
-                    if ($memItemPused) {
-                        $memUsage = number_format((float)$memItemPused['lastvalue'], 2, '.', '');
-                        $memItemId = $memItemPused['itemid'];
+                    // Busca o item de memory utilization
+                    $memItemUtil = isset($groupedItems[$hostid]['vm.memory.utilization']) ? $groupedItems[$hostid]['vm.memory.utilization'] : null;
+                    if ($memItemUtil) {
+                        $memUsage = number_format((float)$memItemUtil['lastvalue'], 2, '.', '');
+                        $memItemId = $memItemUtil['itemid'];
                     } else {
-                        // Tenta obter o item de memory utilization
-                        $memItemUtil = isset($groupedItems[$hostid]['vm.memory.utilization']) ? $groupedItems[$hostid]['vm.memory.utilization'] : null;
-                        if ($memItemUtil) {
-                            $memUsage = number_format((float)$memItemUtil['lastvalue'], 2, '.', '');
-                            $memItemId = $memItemUtil['itemid'];
-                        } else {
-                            // Fallback: utiliza 'total' e 'available'
-                            $memTotalForCalc = isset($groupedItems[$hostid]['vm.memory.size[total]']) ? $groupedItems[$hostid]['vm.memory.size[total]'] : null;
-                            $memAvailableItem = isset($groupedItems[$hostid]['vm.memory.size[available]']) ? $groupedItems[$hostid]['vm.memory.size[available]'] : null;
-                            if ($memTotalForCalc && $memAvailableItem) {
-                                $totalMemCalc = floatval($memTotalForCalc['lastvalue']);
-                                if ($totalMemCalc > 0) {
-                                    $availableMemory = floatval($memAvailableItem['lastvalue']);
-                                    $memUsageCalc = (1 - ($availableMemory / $totalMemCalc)) * 100;
-                                    $memUsage = number_format($memUsageCalc, 2, '.', '');
-                                    $memItemId = $memTotalForCalc['itemid']; // fallback para trends
-                                } else {
-                                    $memUsage = 'N/A';
-                                    $memItemId = null;
-                                }
-                            } else {
-                                $memUsage = 'N/A';
-                                $memItemId = null;
-                            }
-                        }
+                        $memUsage = 'N/A';
+                        $memItemId = null;
                     }
+                    
                     // Obter a alocação total de memória (convertendo de bytes para GB)
                     $memTotalItem = isset($groupedItems[$hostid]['vm.memory.size[total]']) ? $groupedItems[$hostid]['vm.memory.size[total]'] : null;
                     if ($memTotalItem) {
